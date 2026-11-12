@@ -1,0 +1,229 @@
+<!doctype html>
+<html lang="cs">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>regiojetator</title>
+<style>
+  :root { --bg:#fff; --fg:#1b1b1f; --muted:#666; --line:#d9d9de; --accent:#0b57d0; --bad:#b3261e; --ok:#1e7a3c; --chip:#f1f1f4; }
+  @media (prefers-color-scheme: dark) {
+    :root { --bg:#16161a; --fg:#ececf1; --muted:#9a9aa6; --line:#34343c; --accent:#7aa7ff; --bad:#ff8a80; --ok:#6fd19a; --chip:#24242b; }
+  }
+  * { box-sizing: border-box; }
+  body { margin:0; background:var(--bg); color:var(--fg); font:16px/1.45 system-ui, sans-serif; }
+  main { max-width: 900px; margin: 0 auto; padding: 16px; }
+  h1 { font-size: 1.4rem; margin: 0 0 12px; }
+  section { border:1px solid var(--line); border-radius: 10px; padding: 14px; margin-bottom: 14px; }
+  h2 { font-size: 1rem; margin: 0 0 10px; }
+  label { display:block; font-size:.85rem; color:var(--muted); margin-bottom:2px; }
+  input, select, button { font:inherit; color:inherit; background:var(--bg); border:1px solid var(--line); border-radius:8px; padding:8px 10px; }
+  button { cursor:pointer; }
+  button.primary { background:var(--accent); border-color:var(--accent); color:#fff; }
+  button:disabled { opacity:.5; cursor:not-allowed; }
+  .row { display:flex; flex-wrap:wrap; gap:10px; align-items:flex-end; }
+  .row > div { flex:1 1 160px; }
+  .row input { width:100%; }
+  .route { display:flex; justify-content:space-between; gap:10px; width:100%; text-align:left; margin-bottom:6px; }
+  .route[aria-pressed="true"] { border-color:var(--accent); box-shadow:0 0 0 2px var(--accent) inset; }
+  .chips { display:flex; flex-wrap:wrap; gap:6px; margin:8px 0; }
+  .chip { min-width:46px; text-align:center; background:var(--chip); }
+  .chip[aria-pressed="true"] { background:var(--accent); border-color:var(--accent); color:#fff; }
+  .muted { color:var(--muted); }
+  #err { color:var(--bad); white-space:pre-line; margin-bottom:10px; }
+  .ok { color:var(--ok); }
+  iframe { width:100%; height:70vh; border:1px solid var(--line); border-radius:8px; margin-top:10px; }
+</style>
+</head>
+<body>
+<main>
+  <h1>regiojetator</h1>
+  <div id="err" role="alert"></div>
+
+  <section id="s-search">
+    <h2>1. Spoj</h2>
+    <form id="f-search" class="row">
+      <div><label for="from">Odkud</label><input id="from" list="cities" required autocomplete="off"></div>
+      <div><label for="to">Kam</label><input id="to" list="cities" required autocomplete="off"></div>
+      <div><label for="date">Datum</label><input id="date" type="date" required></div>
+      <button class="primary" type="submit">Hledat</button>
+    </form>
+    <datalist id="cities"></datalist>
+  </section>
+
+  <section id="s-routes" hidden>
+    <h2>2. Vyber spoj</h2>
+    <div id="routes"></div>
+    <button id="b-confirm" class="primary" disabled>Potvrdit spoj</button>
+  </section>
+
+  <section id="s-seats" hidden>
+    <h2>3. Vůz a místa</h2>
+    <div class="row">
+      <div><label for="car">Vůz</label><select id="car"></select></div>
+    </div>
+    <div id="seats" class="chips"></div>
+    <div class="muted" id="seat-info"></div>
+    <button id="b-cart" class="primary" disabled>Dát do košíku</button>
+  </section>
+
+  <section id="s-job" hidden>
+    <h2>4. Dokončení rezervace</h2>
+    <div id="job-trip"></div>
+    <div id="job-status"></div>
+    <div class="muted" id="job-timer"></div>
+    <div class="row" style="margin-top:10px">
+      <button id="b-retry">Naklikat znovu</button>
+      <button id="b-stop">Ukončit a uvolnit prohlížeč</button>
+    </div>
+    <iframe id="vnc" title="Prohlížeč" hidden></iframe>
+  </section>
+</main>
+
+<script>
+const $ = (id) => document.getElementById(id);
+const state = { routes: [], route: null, vehicles: [], picked: new Set(), tripLabel: '' };
+const MAX_SEATS = 6;
+
+// The custom header forces a CORS preflight, so other sites cannot call the mutating endpoints.
+async function api(path, opts = {}) {
+  const res = await fetch(path, { ...opts, headers: { 'X-Regiojetator': '1', 'Content-Type': 'application/json', ...opts.headers } });
+  const data = await res.json().catch(() => null);
+  if (!res.ok) throw new Error(data?.error ?? `HTTP ${res.status}`);
+  return data;
+}
+
+const showError = (e) => { $('err').textContent = e ? (e.message ?? String(e)) : ''; };
+const guard = (fn) => async (...a) => { showError(null); try { await fn(...a); } catch (e) { showError(e); } };
+const hhmm = (iso) => iso.slice(11, 16);
+const dmy = (iso) => `${+iso.slice(8, 10)}. ${+iso.slice(5, 7)}.`;
+
+// Local date: toISOString() is UTC and gives yesterday just after midnight in Prague.
+$('date').value = new Date().toLocaleDateString('sv-SE');
+api('/api/cities').then((names) => { $('cities').replaceChildren(...names.map((n) => Object.assign(document.createElement('option'), { value: n }))); }).catch(showError);
+
+$('f-search').addEventListener('submit', guard(async (ev) => {
+  ev.preventDefault();
+  const q = new URLSearchParams({ from: $('from').value, to: $('to').value, date: $('date').value });
+  const data = await api(`/api/search?${q}`);
+  state.routes = data.routes;
+  state.route = null;
+  state.tripLabel = `${data.from} → ${data.to}`;
+  $('s-seats').hidden = true;
+  $('b-confirm').disabled = true;
+  renderRoutes();
+  $('s-routes').hidden = false;
+  if (!data.routes.length) throw new Error('V tento den jsem nenašel žádný spoj.');
+}));
+
+function renderRoutes() {
+  const box = $('routes');
+  box.replaceChildren(...state.routes.map((r) => {
+    const b = document.createElement('button');
+    b.type = 'button';
+    b.className = 'route';
+    b.setAttribute('aria-pressed', String(state.route === r));
+    b.disabled = !r.bookable;
+    b.innerHTML = '<span></span><span class="muted"></span>';
+    b.children[0].textContent = `${hhmm(r.departure)} → ${hhmm(r.arrival)}, ${dmy(r.arrival)}`;
+    b.children[1].textContent = `${r.freeSeats} volných míst, od ${r.priceFrom} Kč`;
+    b.addEventListener('click', () => { state.route = r; $('b-confirm').disabled = false; renderRoutes(); });
+    return b;
+  }));
+}
+
+$('b-confirm').addEventListener('click', guard(async () => {
+  const r = state.route;
+  const q = new URLSearchParams({ routeId: r.routeId, fromStationId: r.fromStationId, toStationId: r.toStationId });
+  state.vehicles = await api(`/api/seats?${q}`);
+  state.picked.clear();
+  $('car').replaceChildren(...state.vehicles.map((v) => Object.assign(document.createElement('option'), { value: v.number, textContent: `Vůz ${v.number} (${v.free.length} volných)` })));
+  renderSeats();
+  $('s-seats').hidden = false;
+}));
+
+$('car').addEventListener('change', () => { state.picked.clear(); renderSeats(); });
+
+function renderSeats() {
+  const v = state.vehicles.find((x) => x.number === Number($('car').value));
+  $('seats').replaceChildren(...(v?.free ?? []).map((n) => {
+    const b = document.createElement('button');
+    b.type = 'button';
+    b.className = 'chip';
+    b.textContent = n;
+    b.setAttribute('aria-pressed', String(state.picked.has(n)));
+    b.addEventListener('click', () => {
+      if (state.picked.has(n)) state.picked.delete(n);
+      else if (state.picked.size < MAX_SEATS) state.picked.add(n);
+      renderSeats();
+    });
+    return b;
+  }));
+  const picked = [...state.picked].sort((a, b) => a - b);
+  $('seat-info').textContent = picked.length ? `Vybráno: ${picked.join(', ')} (max. ${MAX_SEATS})` : `Vyber 1 až ${MAX_SEATS} míst.`;
+  $('b-cart').disabled = picked.length === 0;
+}
+
+$('b-cart').addEventListener('click', guard(async () => {
+  const r = state.route;
+  $('b-cart').disabled = true; // no double submit
+  try {
+    await api('/api/job', {
+      method: 'POST',
+      body: JSON.stringify({
+        routeId: r.routeId, fromStationId: r.fromStationId, toStationId: r.toStationId,
+        car: Number($('car').value), seats: [...state.picked],
+        trip: `${state.tripLabel}, ${dmy(r.departure)} ${hhmm(r.departure)}`,
+      }),
+    });
+  } finally {
+    renderSeats();
+  }
+  poll();
+}));
+
+$('b-retry').addEventListener('click', guard(async () => {
+  // Retrying reloads the booking page in the shared browser and discards what is being filled in.
+  if (!confirm('Naklikat znovu? Rozdělaná rezervace v okně prohlížeče se zahodí.')) return;
+  await api('/api/job/retry', { method: 'POST' });
+  poll();
+}));
+$('b-stop').addEventListener('click', guard(async () => { await api('/api/job', { method: 'DELETE' }); poll(); }));
+
+let timer = null;
+let vncGen = null; // display generation shown in the iframe; reload when the server restarts the display
+
+async function poll() {
+  clearTimeout(timer);
+  let job = null;
+  try { job = await api('/api/job'); } catch (e) { showError(e); }
+  renderJob(job);
+  if (job) timer = setTimeout(poll, 2000);
+}
+
+function renderJob(job) {
+  $('s-job').hidden = !job;
+  if (!job) { $('vnc').hidden = true; $('vnc').removeAttribute('src'); vncGen = null; return; }
+  $('job-trip').textContent = `${job.trip} · vůz ${job.car}, místa ${job.seats.join(', ')}`;
+  const st = $('job-status');
+  st.textContent = job.message;
+  st.className = job.state === 'ready' ? 'ok' : 'muted';
+  $('b-retry').disabled = job.state === 'starting' || job.state === 'stopping';
+  $('b-stop').disabled = job.state === 'stopping';
+  if (job.state === 'ready' && vncGen !== job.displayGen) {
+    $('vnc').src = '/vnc/vnc.html?autoconnect=1&resize=scale&path=vnc/websockify';
+    $('vnc').hidden = false;
+    vncGen = job.displayGen;
+  }
+  if (job.lastFillAt) {
+    const s = Math.floor((Date.now() - job.lastFillAt) / 1000);
+    const left = Math.max(0, Math.round((job.expiresAt - Date.now()) / 60000));
+    $('job-timer').textContent = `Naposledy v košíku před ${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}. Košík drží jen krátce (zhruba 15 min), pak dej „Naklikat znovu“. Prohlížeč se sám ukončí za ${left} min.`;
+  } else {
+    $('job-timer').textContent = '';
+  }
+}
+
+poll();
+</script>
+</body>
+</html>

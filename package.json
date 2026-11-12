@@ -1,0 +1,13 @@
+{
+  "name": "regiojetator",
+  "version": "0.1.0",
+  "description": "Puts chosen seats of a RegioJet train into the cart once; the user finishes the purchase.",
+  "type": "module",
+  "engines": { "node": ">=22" },
+  "bin": { "regiojetator": "./regiojetator.mjs" },
+  "scripts": {
+    "start": "node server.mjs",
+    "test": "node --test \"test/*.test.mjs\""
+  },
+  "dependencies": { "playwright-core": "^1.49.0" }
+}
