@@ -76,6 +76,16 @@ export function createRoutes({ manager, rj, config, indexHtml }) {
       return send(res, 200, await rj.getVehicles(...ids));
     }
 
+    if (req.method === 'GET' && url.pathname.startsWith('/api/layout/')) {
+      const svg = await rj.getLayout(url.pathname.slice('/api/layout/'.length));
+      res.writeHead(200, {
+        'Content-Type': 'image/svg+xml; charset=utf-8',
+        'Cache-Control': 'private, max-age=3600',
+        'Content-Security-Policy': "default-src 'none'; style-src 'unsafe-inline'; sandbox",
+      });
+      return res.end(svg);
+    }
+
     if (route === 'GET /api/job') return send(res, 200, manager.snapshot());
 
     if (url.pathname.startsWith('/api/job') && ['POST', 'DELETE'].includes(req.method)) {

@@ -33,6 +33,8 @@ The browser window is at <http://localhost:6080/vnc.html?autoconnect=1&resize=sc
 | `REGIOJETATOR_BROWSER` | `chromium` | `chromium` (Playwright's) or `chrome` (installed) |
 | `REGIOJETATOR_PROFILE` | `~/.regiojetator/profile` | Browser profile directory (`/profile` in the image) |
 | `REGIOJETATOR_WINDOW_SIZE` | `1440,900` | Browser window and virtual display size |
+| `REGIOJETATOR_EMAIL` | empty | E-mail typed into the passenger step after the cart (never logged or shown in the UI) |
+| `REGIOJETATOR_PHONE` | empty | Phone typed into the same step (optional on the site, default prefix +420) |
 | `REGIOJETATOR_VNC_BIND` | `127.0.0.1` | Bind address of noVNC (CLI in Docker uses `0.0.0.0`) |
 
 ## Behaviour
@@ -41,6 +43,7 @@ The browser window is at <http://localhost:6080/vnc.html?autoconnect=1&resize=sc
 - Occupied seats abort with the list of free seats in the car (CLI exit code 2).
 - The selection shown on the site is compared with the request before continuing.
 - RegioJet allows at most 6 passengers per order.
+- With `REGIOJETATOR_EMAIL`/`REGIOJETATOR_PHONE` set, the cart step continues to the passenger page and fills those two fields. Consent to the terms and the final button stay with the user.
 
 ## Memory
 

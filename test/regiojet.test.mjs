@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { UserError } from '../errors.mjs';
-import { parseSeats, normalizeSeats, assertNotDeparted, resolveCity, validateCar } from '../regiojet.mjs';
+import { parseSeats, normalizeSeats, assertNotDeparted, resolveCity, validateCar, layoutName, getLayout } from '../regiojet.mjs';
 import { parseSelection } from '../browser.mjs';
 
 test('parseSeats handles ranges, lists and mixes', () => {
@@ -56,4 +56,13 @@ test('parseSelection reads the summary panel without gluing the passenger count'
   const two = 'Vůz 2, Sedadlo 2, 3 Vůz 3, Sedadlo 31\n2× Dospělý';
   assert.deepEqual([...parseSelection(two)].sort(), ['2:2', '2:3', '3:31']);
   assert.equal(parseSelection('nothing here').size, 0);
+});
+
+test('layoutName accepts only svg files under the official layout path', async () => {
+  const base = 'https://brn-ybus-pubapi.sa.cz/resources/vehicle_layout/';
+  assert.equal(layoutName(base + 'vlak_vuz-bk-42_flipped.svg'), 'vlak_vuz-bk-42_flipped.svg');
+  for (const bad of [null, undefined, '', 'https://evil.test/a.svg', base + '../x.svg', base + 'a.html', base + 'a/b.svg', base]) {
+    assert.equal(layoutName(bad), null, String(bad));
+  }
+  await assert.rejects(getLayout('../etc.svg'), UserError);
 });

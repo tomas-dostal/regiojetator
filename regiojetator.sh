@@ -6,7 +6,11 @@ cd "$(dirname "$0")"
 
 docker build -q -t regiojetator . >/dev/null
 
-exec docker run --rm -it \
+ENV_FILE=""
+[ -f .env ] && ENV_FILE="--env-file .env"
+
+# shellcheck disable=SC2086
+exec docker run --rm -it $ENV_FILE \
   -p 127.0.0.1:6080:6080 \
   -v regiojetator-profile:/profile \
   -e REGIOJETATOR_VNC=1 \

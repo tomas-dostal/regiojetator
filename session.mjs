@@ -77,12 +77,14 @@ export function createJobManager({ ttlMs, deps }) {
       const page = s.context.pages()[0] ?? (await s.context.newPage());
       alive();
       s.message = 'Dávám místa do košíku…';
-      await deps.fillCart(page, { route: { routeId, fromStationId, toStationId }, car, seats, seatClassKey });
+      const contactFilled = await deps.fillCart(page, { route: { routeId, fromStationId, toStationId }, car, seats, seatClassKey });
       alive();
       s.attempts += 1;
       s.lastFillAt = Date.now();
       s.state = 'ready';
-      s.message = 'Místa jsou v košíku. Dokonči rezervaci v okně níže.';
+      s.message = contactFilled
+        ? 'Místa jsou v košíku a kontakt je vyplněný. Zaškrtni souhlas s podmínkami a dokonči rezervaci v okně níže.'
+        : 'Místa jsou v košíku. Dokonči rezervaci v okně níže.';
       s.timer = setTimeout(() => stop().catch(console.error), ttlMs);
     } catch (e) {
       if (e === CANCELLED || s.stopping) return;
@@ -90,6 +92,7 @@ export function createJobManager({ ttlMs, deps }) {
       s.message = describe(e, retry);
       // A stale selection or an unknown failure leaves nothing worth keeping open.
       if (!(e instanceof UserError) || e.code === 3) await releaseBrowser(s);
+      else s.timer = setTimeout(() => stop().catch(console.error), ttlMs);
     } finally {
       s.busy = false;
     }

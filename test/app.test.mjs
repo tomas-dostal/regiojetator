@@ -2,6 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import http from 'node:http';
 import { createApp } from '../app.mjs';
+import { UserError } from '../errors.mjs';
 
 const config = { allowedHosts: ['good.test'], novncPort: 1 };
 const calls = [];
@@ -12,7 +13,13 @@ const manager = {
   snapshot: () => null,
   hasDisplay: () => false,
 };
-const rj = { listCities: async () => [{ name: 'Řevnice' }, { name: 'Zlín' }, { name: 'Čelákovice' }] };
+const rj = {
+  listCities: async () => [{ name: 'Řevnice' }, { name: 'Zlín' }, { name: 'Čelákovice' }],
+  getLayout: async (name) => {
+    if (name !== 'ok.svg') throw new UserError('Neplatný název rozložení.');
+    return '<svg xmlns="http://www.w3.org/2000/svg"/>';
+  },
+};
 const server = createApp({ manager, rj, config, indexHtml: '<html></html>' });
 await new Promise((r) => server.listen(0, '127.0.0.1', r));
 const { port } = server.address();
@@ -80,4 +87,12 @@ test('cities are sorted with Czech collation', async () => {
 
 test('vnc proxy refuses when no display runs', async () => {
   assert.equal((await call('GET', '/vnc/vnc.html')).status, 502);
+});
+
+test('layout endpoint serves svg with a locked-down CSP and rejects bad names', async () => {
+  const good = await call('GET', '/api/layout/ok.svg');
+  assert.equal(good.status, 200);
+  assert.match(good.body, /<svg/);
+  assert.equal((await call('GET', '/api/layout/..%2Fx.svg')).status, 400);
+  assert.equal((await call('GET', '/api/layout/ok.svg', { headers: { Host: 'evil.test' } })).status, 403);
 });

@@ -16,6 +16,12 @@ const oneOf = (name, def, allowed) => {
   return v;
 };
 
+const optional = (name, pattern, what) => {
+  const v = (process.env[name] || '').trim();
+  if (v && !pattern.test(v)) throw new Error(`${name} is not a valid ${what}`);
+  return v;
+};
+
 const port = int('PORT', 8080);
 
 export const config = Object.freeze({
@@ -27,6 +33,10 @@ export const config = Object.freeze({
   vncBind: process.env.REGIOJETATOR_VNC_BIND || '127.0.0.1',
   allowedHosts: (process.env.ALLOWED_HOSTS || `localhost:${port},127.0.0.1:${port}`)
     .split(',').map((h) => h.trim().toLowerCase()).filter(Boolean),
+  contact: {
+    email: optional('REGIOJETATOR_EMAIL', /^[^\s@]+@[^\s@]+\.[^\s@]+$/, 'e-mail address'),
+    phone: optional('REGIOJETATOR_PHONE', /^(\+420)?[\d ]{9,13}$/, 'Czech phone number (+420 and 9 digits)').replace(/\D/g, '').slice(-9),
+  },
   display: ':99',
   novncPort: 6080,
   rfbPort: 5900,

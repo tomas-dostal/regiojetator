@@ -100,7 +100,7 @@ async function dismissCookies(page) {
   await page.getByRole('button', { name: /Odmítnout vše/i }).click({ timeout: 4000 }).catch(() => {});
 }
 
-/** Drives the site up to the add-ons step with exactly the requested seats selected. */
+/** Drives the site to the add-ons step (or the passenger step when contact details are configured); returns true if contact was filled. */
 export async function fillCart(page, { route, car, seats, seatClassKey, log = () => {} }) {
   await page.goto(seatingUrl(route, seatClassKey, seats.length), { waitUntil: 'domcontentloaded' });
   await dismissCookies(page);
@@ -128,4 +128,34 @@ export async function fillCart(page, { route, car, seats, seatClassKey, log = ()
   } catch {
     throw new UserError('Místa jsou vybraná, ale košík se nepotvrdil. Zkontroluj okno prohlížeče.', 4);
   }
+  return fillContact(page);
+}
+
+const digits = (v) => v.replace(/\D/g, '');
+
+// Terms consent and the final button are left to the user.
+async function fillContact(page) {
+  const { email, phone } = config.contact;
+  if (!email && !phone) return false;
+  await page.getByRole('button', { name: 'Pokračovat' }).first().click();
+  try {
+    await page.waitForURL(/\/reservation\/passengers/, { timeout: 20000 });
+    await page.locator('input[name="email"]').waitFor({ timeout: 10000 });
+  } catch {
+    throw new UserError('Místa jsou v košíku, ale stránka s kontakty se neotevřela. Pokračuj v okně prohlížeče.', 4);
+  }
+  const fields = [['email', email, (v) => v === email], ['phone', phone, (v) => digits(v) === phone || digits(v) === `420${phone}`]];
+  for (const [name, value, same] of fields) {
+    if (!value) continue;
+    const input = page.locator(`input[name="${name}"]`);
+    let ok = false;
+    // The form re-renders shortly after load and can drop what was typed, so verify after a pause.
+    for (let attempt = 0; attempt < 4 && !ok; attempt++) {
+      await input.fill(value);
+      await page.waitForTimeout(800);
+      ok = same(await input.inputValue());
+    }
+    if (!ok) throw new UserError(`Pole ${name} se nepodařilo vyplnit. Dokonči ho v okně prohlížeče.`, 4);
+  }
+  return true;
 }

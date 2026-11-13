@@ -73,6 +73,26 @@ export function assertNotDeparted(dep, now = new Date()) {
   }
 }
 
+const LAYOUT_BASE = 'https://brn-ybus-pubapi.sa.cz/resources/vehicle_layout/';
+const layoutCache = new Map();
+
+export const layoutName = (url) => {
+  const name = typeof url === 'string' && url.startsWith(LAYOUT_BASE) ? url.slice(LAYOUT_BASE.length) : '';
+  return /^[\w.-]{1,100}\.svg$/.test(name) ? name : null;
+};
+
+export async function getLayout(name) {
+  if (!layoutName(LAYOUT_BASE + name)) throw new UserError('Neplatný název rozložení.');
+  if (!layoutCache.has(name)) {
+    const res = await fetch(LAYOUT_BASE + name, { signal: AbortSignal.timeout(20000) });
+    if (!res.ok) throw new UserError(`Rozložení vozu se nepodařilo načíst (${res.status}).`);
+    const svg = await res.text();
+    if (svg.length > 500_000) throw new UserError('Rozložení vozu je příliš velké.');
+    layoutCache.set(name, svg);
+  }
+  return layoutCache.get(name);
+}
+
 export async function getVehicles(routeId, fromStationId, toStationId) {
   const fs = await api('/routes/freeSeats', {
     method: 'POST',
@@ -85,6 +105,7 @@ export async function getVehicles(routeId, fromStationId, toStationId) {
     .map((v) => ({
       number: v.number,
       seatClassKey: v.seatClasses?.[0]?.name,
+      layout: layoutName(v.decks?.[0]?.layoutURL),
       free: (v.decks?.[0]?.freeSeats ?? []).map((s) => s.index).sort((a, b) => a - b),
     }))
     .sort((a, b) => a.number - b.number);

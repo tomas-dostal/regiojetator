@@ -28,6 +28,15 @@
   .chips { display:flex; flex-wrap:wrap; gap:6px; margin:8px 0; }
   .chip { min-width:46px; text-align:center; background:var(--chip); }
   .chip[aria-pressed="true"] { background:var(--accent); border-color:var(--accent); color:#fff; }
+  #map { max-height:70vh; overflow:auto; max-width:260px; border:1px solid var(--line); border-radius:8px; margin:8px 0; }
+  #map svg { display:block; width:100%; height:auto; }
+  [hidden] { display:none !important; }
+  #map svg g.seat { opacity:.3; }
+  #map svg g.seat.free { opacity:1; cursor:pointer; }
+  #map svg g.free :not(text) { fill:#b9dfc4; stroke:#2f7d4a; }
+  #map svg g.picked :not(text) { fill:var(--accent); stroke:var(--accent); }
+  #map svg g.picked text { fill:#fff; }
+  #map svg g.free:focus-visible { outline:2px solid var(--accent); }
   .muted { color:var(--muted); }
   #err { color:var(--bad); white-space:pre-line; margin-bottom:10px; }
   .ok { color:var(--ok); }
@@ -61,6 +70,7 @@
     <div class="row">
       <div><label for="car">Vůz</label><select id="car"></select></div>
     </div>
+    <div id="map" hidden></div>
     <div id="seats" class="chips"></div>
     <div class="muted" id="seat-info"></div>
     <button id="b-cart" class="primary" disabled>Dát do košíku</button>
@@ -143,24 +153,97 @@ $('b-confirm').addEventListener('click', guard(async () => {
 
 $('car').addEventListener('change', () => { state.picked.clear(); renderSeats(); });
 
+const CART_MIN = 25;
+const layouts = new Map();
+const DROP = 'a,style,image,animate,animateTransform,animateMotion,set,iframe,link,script,foreignObject';
+
+function loadLayout(name) {
+  if (!layouts.has(name)) {
+    const p = fetch(`/api/layout/${name}`).then(async (res) => {
+      const doc = new DOMParser().parseFromString(await res.text(), 'image/svg+xml');
+      if (!res.ok || doc.querySelector('parsererror')) throw new Error('layout');
+      doc.querySelectorAll(DROP).forEach((e) => e.remove());
+      doc.querySelectorAll('*').forEach((e) => [...e.attributes].forEach((a) => {
+        const href = /^(xlink:)?href$/i.test(a.name) && !a.value.startsWith('#');
+        const url = a.name === 'style' && /url\(/i.test(a.value);
+        if (/^on/i.test(a.name) || href || url) e.removeAttribute(a.name);
+      }));
+      return document.importNode(doc.documentElement, true);
+    });
+    p.catch(() => layouts.delete(name));
+    layouts.set(name, p);
+  }
+  return layouts.get(name).then((svg) => svg.cloneNode(true));
+}
+
+const currentCar = () => state.vehicles.find((x) => x.number === Number($('car').value));
+const showMap = (on) => { $('map').hidden = !on; $('seats').hidden = on; };
+let mapToken = 0;
+
+function toggleSeat(n) {
+  if (state.picked.has(n)) state.picked.delete(n);
+  else if (state.picked.size < MAX_SEATS) state.picked.add(n);
+  updateSelection();
+}
+
+function updateSelection() {
+  const picked = [...state.picked].sort((a, b) => a - b);
+  $('seat-info').textContent = picked.length ? `Vybráno: ${picked.join(', ')} (max. ${MAX_SEATS})` : `Vyber 1 až ${MAX_SEATS} míst.`;
+  $('b-cart').disabled = picked.length === 0;
+  document.querySelectorAll('#seats .chip, #map g.free').forEach((el) => {
+    const on = state.picked.has(Number(el.dataset.n));
+    el.classList.toggle('picked', on);
+    el.setAttribute('aria-pressed', String(on));
+  });
+}
+
+function drawMap(svg, free) {
+  svg.removeAttribute('height');
+  svg.removeAttribute('width');
+  svg.querySelectorAll('g[id]').forEach((g) => {
+    if (!/^s\d+$/.test(g.id)) return;
+    const n = Number(g.id.slice(1));
+    g.classList.add('seat');
+    if (!free.has(n)) return;
+    g.classList.add('free');
+    g.dataset.n = n;
+    g.setAttribute('tabindex', '0');
+    g.setAttribute('role', 'button');
+    g.setAttribute('aria-label', `Místo ${n}`);
+  });
+  svg.addEventListener('click', (e) => {
+    const g = e.target.closest('g.free');
+    if (g) toggleSeat(Number(g.dataset.n));
+  });
+  svg.addEventListener('keydown', (e) => {
+    const g = e.target.closest?.('g.free');
+    if (g && (e.key === 'Enter' || e.key === ' ')) { e.preventDefault(); toggleSeat(Number(g.dataset.n)); }
+  });
+}
+
 function renderSeats() {
-  const v = state.vehicles.find((x) => x.number === Number($('car').value));
+  const v = currentCar();
+  const token = ++mapToken;
+  $('map').replaceChildren();
   $('seats').replaceChildren(...(v?.free ?? []).map((n) => {
     const b = document.createElement('button');
     b.type = 'button';
     b.className = 'chip';
     b.textContent = n;
-    b.setAttribute('aria-pressed', String(state.picked.has(n)));
-    b.addEventListener('click', () => {
-      if (state.picked.has(n)) state.picked.delete(n);
-      else if (state.picked.size < MAX_SEATS) state.picked.add(n);
-      renderSeats();
-    });
+    b.dataset.n = n;
+    b.addEventListener('click', () => toggleSeat(n));
     return b;
   }));
-  const picked = [...state.picked].sort((a, b) => a - b);
-  $('seat-info').textContent = picked.length ? `Vybráno: ${picked.join(', ')} (max. ${MAX_SEATS})` : `Vyber 1 až ${MAX_SEATS} míst.`;
-  $('b-cart').disabled = picked.length === 0;
+  showMap(false);
+  updateSelection();
+  if (!v?.layout) return;
+  loadLayout(v.layout).then((svg) => {
+    if (token !== mapToken) return;
+    drawMap(svg, new Set(v.free));
+    $('map').replaceChildren(svg);
+    showMap(true);
+    updateSelection();
+  }).catch(() => {});
 }
 
 $('b-cart').addEventListener('click', guard(async () => {
@@ -194,8 +277,8 @@ let vncGen = null; // display generation shown in the iframe; reload when the se
 
 async function poll() {
   clearTimeout(timer);
-  let job = null;
-  try { job = await api('/api/job'); } catch (e) { showError(e); }
+  let job;
+  try { job = await api('/api/job'); } catch (e) { showError(e); timer = setTimeout(poll, 5000); return; }
   renderJob(job);
   if (job) timer = setTimeout(poll, 2000);
 }
@@ -217,7 +300,11 @@ function renderJob(job) {
   if (job.lastFillAt) {
     const s = Math.floor((Date.now() - job.lastFillAt) / 1000);
     const left = Math.max(0, Math.round((job.expiresAt - Date.now()) / 60000));
-    $('job-timer').textContent = `Naposledy v košíku před ${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}. Košík drží jen krátce (zhruba 15 min), pak dej „Naklikat znovu“. Prohlížeč se sám ukončí za ${left} min.`;
+    const cart = CART_MIN * 60 - s;
+    const hold = cart > 0
+      ? `Košík podle pozorování drží ${CART_MIN} min, zbývá asi ${Math.floor(cart / 60)}:${String(cart % 60).padStart(2, '0')}.`
+      : 'Košík už pravděpodobně vypršel, dej „Naklikat znovu“.';
+    $('job-timer').textContent = `Naposledy v košíku před ${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}. ${hold} Prohlížeč se sám ukončí za ${left} min.`;
   } else {
     $('job-timer').textContent = '';
   }

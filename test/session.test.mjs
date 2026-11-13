@@ -122,6 +122,29 @@ test('taken seats on retry keep the browser and explain why', async () => {
   await manager.stop();
 });
 
+test('a filled contact is reflected in the ready message', async () => {
+  const { manager } = setup({ fillCart: async () => true });
+  manager.start(params);
+  await waitFor(manager, 'ready');
+  assert.match(manager.snapshot().message, /kontakt je vyplněný/);
+  await manager.stop();
+});
+
+test('a kept browser still expires after a failed retry', async () => {
+  let calls = 0;
+  const { manager, log } = setup({
+    checkSeats: async () => { if (++calls > 1) throw new UserError('Tato místa nejsou volná: 31', 2); return 'C0'; },
+  }, 60);
+  manager.start(params);
+  await waitFor(manager, 'ready');
+  manager.retry();
+  await waitFor(manager, 'error');
+  assert.equal(log.closed, 0);
+  await tick(200);
+  assert.equal(manager.snapshot(), null);
+  assert.equal(log.closed, 1);
+});
+
 test('the job expires after its TTL', async () => {
   const { manager, log } = setup({}, 30);
   manager.start(params);
